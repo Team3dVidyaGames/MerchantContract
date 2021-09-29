@@ -1,71 +1,19 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.6;
 
-pragma solidity ^0.5.0;
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
+import "./interfaces/IInventory.sol";
 
-/***
- * Merchant, how it should work 
- * 
- * Allows game (iGame) developers to list items for sale 
- * Only the game developer can add their items 
- * Requires the item (templateId) to exist in the iInventory contract (only team3d admin can add new templates into iInventory). Existing templates have supply of at least 1
- * Item buyBackPrice cannot be bigger than price 
- * Requires the game to be whitelisted by Merchant admin 
- * Game dev pays the iInventory contract listing fee 
- * While it costs VIDYA to list the item, in theory dev should earn back profit for each sale (dev fee is called from their own game!)
- * 
- * Sells those items to users (mints into existence on the iInventory contract)
- * Runs restock every time, but actually restocks only when necessary (and allowed)
- * Item needs to be in stock 
- * Item price gets sent here to Merchant  
- * Dev fee gets sent to dev of game (devFee called from the game, so devs can adjust it)
- * Item is minted into existence on iInventory contract 
- * Ability to sell items like this in bulk 
- * 
- * Buys those items back from users (burns from the iInventory contract)
- * Burns the item (msg.sender needs to be owner obviously, otherwise reverts)
- * Sends buyBackPrice back to the user (which is why it can't be bigger than price)
- * 
- * iInventory should get item listing fees from game devs 
- * Admin should be able to withdraw Merchant's profits, excluding the buyBackPrice which should 
- * always be reserved in case all people "bank run" and sell all items back to Merchant 
- * */
-
-// ERC20 token Interface 
-interface ERC20 {
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address who) external view returns (uint256);
-    function allowance(address owner, address spender) external view returns (uint256);
-    function transfer(address to, uint256 value) external returns (bool);
-    function approve(address spender, uint256 value) external returns (bool);
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-}
-
-// Inventory contract Interface. Mainnet address: 0x9680223f7069203e361f55fefc89b7c1a952cdcc
-contract iInventory {
-	function getIndividualCount(uint256 _templateId) public view returns(uint256);
-    function getTemplateIDsByTokenIDs(uint[] memory _tokenIds) public view returns(uint[] memory);
-    function createFromTemplate(uint256 _templateId, uint8 _feature1, uint8 _feature2, uint8 _feature3, uint8 _feature4, uint8 _equipmentPosition) public returns(uint256);
-    function burn(uint256 _tokenId) public returns(bool);
-}
-
-contract iGame {
-    function devFee() public view returns(uint256);
-    function developer() public view returns(address);
-}
-
-contract Merchant {
-    using SafeMath for uint256;
+contract Merchant is Ownable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+    using Strings for uint256;
     
-    constructor(uint256 _inventoryFee) public {
-        _admin = msg.sender;
-		inventoryFee = _inventoryFee;
-    }
-    
-    address public _admin;
-    address public inventory    = address(0x9680223F7069203E361f55fEFC89B7c1A952CDcc);
-    address public vidya        = address(0x3D3D35bb9bEC23b06Ca00fe472b50E7A4c692C30);
+    IInventory Inventory;
+    IERC20 Vidya;
 
 	// Item
 	struct Item {
@@ -98,39 +46,33 @@ contract Merchant {
 	// All buyBackPrice(s) so we don't accidentally use these, ever.
 	uint256 public buyBackPrices;
 
-    // Things 
-    iInventory inv = iInventory(inventory);
-    ERC20 token = ERC20(vidya);
-
 	// Games that are allowed to use merchant's services
 	// This is for game devs and who can add or edit items etc. 
 	mapping(address => bool) public whitelist;
 	
 	// TemplateId count per game. Needed by templateIdsByGame() 
 	mapping(address => uint256) public totalItemsForSaleByGame;
-
-    // Admin only functions 
-    modifier admin() {
-        require(msg.sender == _admin, "Merchant: Admin only function");
-        _;
-    }
 	
-	// Game developer only functions 
 	modifier isDevOf(address _game) {
-		require(msg.sender == devOf(_game), "Merchant: Msg.sender is not the Game developer");
+		require(msg.sender == devOf(_game), "Merchant: Caller is not the Game developer");
 		_;
 	}
-	
-	// Check if the item is in stock 
+
 	modifier inStock(address _game, uint256 _templateId) {
 	    (, , , , , uint256 stock, , , , , , , ) = itemByGame(_game, _templateId);
 	    require(stock > 0, "Merchant: Item requested is out of stock");
 	    _;
 	}
 	
+    constructor(uint256 _inventoryFee, IInventory _Inventory, IERC20 _Vidya) {
+		inventoryFee = _inventoryFee;
+        Inventory = _Inventory;
+        Vidya = _Vidya;
+    }
+    
 	// Function to return the Merchant's profit 
 	function profits() public view returns(uint256) {
-	    return SafeMath.sub(token.balanceOf(address(this)), buyBackPrices);
+	    return Vidya.balanceOf(address(this)) - buyBackPrices;
 	}
 
     // Function to return the dev of _game 
@@ -150,7 +92,7 @@ contract Merchant {
         (, , , uint256 price, , , , , , , , , ) = itemByGame(_game, _templateId);
         // item price + devfee
         // does not include inventory fee because this is for the dev to pay upon listing new items 
-        return SafeMath.add(price, devFee(_game));
+        return price + devFee(_game);
     }
 
     // Get A item from _game by _templateId
@@ -241,16 +183,16 @@ contract Merchant {
 	    details = detailsOfItemByGame(_game, _templateId);
 
         // Transfer price to Merchant contract
-        require(token.transferFrom(msg.sender, address(this), price) == true, "Merchant: Token transfer to Merchant did not succeed");
+        Vidya.safeTransferFrom(msg.sender, address(this), price);
         
         // Transfer dev fee to game developer
-        require(token.transferFrom(msg.sender, devOf(_game), devFee(_game)) == true, "Merchant: Token transfer to Dev did not succeed");
+        Vidya.safeTransferFrom(msg.sender, devOf(_game), devFee(_game));
         
 	    // Track the buyBackPrices
-	    buyBackPrices = SafeMath.add(buyBackPrice, buyBackPrices);
+	    buyBackPrices = buyBackPrice + buyBackPrices;
 
         // Materialize
-        uint256 tokenId = inv.createFromTemplate(_templateId, details[0], details[1], details[2], details[3], details[4]);
+        uint256 tokenId = Inventory.createFromTemplate(_templateId, details[0], details[1], details[2], details[3], details[4]);
 
         // tokenId of the item sold to player
         return (tokenId, true);
@@ -268,14 +210,15 @@ contract Merchant {
         uint256[] memory tokenIds = new uint256[](1);
         tokenIds[0] = _tokenId;
         uint256[] memory templateIds = new uint256[](1);
-        templateIds = inv.getTemplateIDsByTokenIDs(tokenIds);
+        templateIds = Inventory.getTemplateIDsByTokenIDs(tokenIds);
         uint256 templateId = templateIds[0];
         (, , , , uint256 buyBackPrice, , , , , , , , ) = itemByGame(_game, templateId);
-        require(inv.burn(_tokenId), "Merchant: Token burn failed");
-        require(token.transfer(msg.sender, buyBackPrice) == true, "Merchant: Token transfer did not succeed");
+        require(Inventory.burn(_tokenId), "Merchant: Token burn failed");
+        Vidya.safeTransfer(msg.sender, buyBackPrice);
         
 	    // Track the buyBackPrices
 	    buyBackPrices = SafeMath.sub(buyBackPrices, buyBackPrice);
+
         return templateId;
     }
 
@@ -294,15 +237,15 @@ contract Merchant {
     
     /* ADMIN FUNCTIONS */
     
-    function updateInventoryFee(uint256 _fee) external admin {
+    function updateInventoryFee(uint256 _fee) external onlyOwner {
         inventoryFee = _fee;
     } 
     
-    function updateWhitelist(address _game, bool _status) external admin {
+    function updateWhitelist(address _game, bool _status) external onlyOwner {
         whitelist[_game] = _status;
     }
     
-    function withdrawProfit() external admin {
+    function withdrawProfit() external onlyOwner {
         uint256 profit = profits();
         // Send the tokens 
         token.transfer(_admin, profit);
@@ -325,18 +268,18 @@ contract Merchant {
 	    require(_buyBackPrice <= _price, "Merchant: Buyback price cannot be bigger than item price"); // this would be very bad if allowed! 
 		require(whitelist[_game], "Merchant: Game is not whitelisted");
 		
-		uint256 totalSupply = inv.getIndividualCount(_templateId);
+		uint256 totalSupply = Inventory.getIndividualCount(_templateId);
 		
 		// Fails when totalSupply of template is 0. Not added by admin to inventory contract
 		require(totalSupply > 0, "Merchant: Trying to add item that does not exist yet");
 		
 		// Transfer the listing fee to Inventory
-		require(token.transferFrom(msg.sender, inventory, inventoryFee) == true, "Merchant: Token transfer did not succeed");
+		Vidya.safeTransferFrom(msg.sender, inventory, inventoryFee);
 		
 		// Update fees-to-inventory tracker 
-		collectedFees = SafeMath.add(inventoryFee, collectedFees);
+		collectedFees = inventoryFee + collectedFees;
 		
-		totalItemsForSaleByGame[_game] = SafeMath.add(1, totalItemsForSaleByGame[_game]);
+		totalItemsForSaleByGame[_game] ++;
 		
 		allItems.push(
 		    Item(
@@ -356,29 +299,4 @@ contract Merchant {
 		        )
             );
 	}
-}
-
-
-library SafeMath {
-    function mul(uint256 a, uint256 b) internal pure returns (uint256) {
-        if (a == 0) {
-          return 0;
-        }
-        uint256 c = a * b;
-        require(c / a == b, "SafeMath: multiplication overflow");
-        return c;
-    }
-    function div(uint256 a, uint256 b) internal pure returns (uint256) {
-        uint256 c = a / b;
-        return c;
-    }
-    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
-        require(b <= a, "SafeMath: subtraction overflow");
-        return a - b;
-    }
-    function add(uint256 a, uint256 b) internal pure returns (uint256) {
-        uint256 c = a + b;
-        require(c >= a, "SafeMath: addition overflow");
-        return c;
-    }
 }
