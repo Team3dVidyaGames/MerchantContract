@@ -39,16 +39,4 @@ interface IInventory {
         uint256 _tokenId,
         uint256 _amount
     ) external;
-
-    /**
-     * @dev External function to mint the token.
-     * @param _user Address of user
-     * @param _tokenId Token id
-     * @param _amount Token amount
-     */
-    function mint(
-        address _user,
-        uint256 _tokenId,
-        uint256 _amount
-    ) external;
 }
