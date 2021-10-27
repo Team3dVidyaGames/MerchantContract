@@ -5,21 +5,24 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
 import "./interfaces/IInventory.sol";
+import "./interfaces/IGame.sol";
 
 contract Merchant is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
-    using Strings for uint256;
+
+    /// @notice Event emitted only on construction.
+    event MerchantDeployed();
 
     //System information
     IInventory public Inventory;
     IERC20 public Vidya;
-    address public vault;
+    address public vaultAddr;
+
     //Listing Fee for devs
     uint256 public inventoryFee;
 
-    struct Items {
+    struct Item {
         address game; // which game is selling this
         uint256 templateId; // which item is this
         uint256 index;
@@ -27,8 +30,8 @@ contract Merchant is Ownable, ReentrancyGuard {
         uint256 buyBackPrice; // what the merchant is willing to pay for this item
         uint256 stock; // how many merchant has in stock right now
         uint256 stockCap; // the stock cap that restock fills up to
-        uint32 restockTime; // time of last restock
-        uint32 cooldownTime; // time left until next restock is possible (ie. an item has 1 day cooldownTime between restocks)
+        uint256 restockTime; // time of last restock
+        uint256 cooldownTime; // time left until next restock is possible (ie. an item has 1 day cooldownTime between restocks)
         uint8 feature1;
         uint8 feature2;
         uint8 feature3;
@@ -39,16 +42,7 @@ contract Merchant is Ownable, ReentrancyGuard {
     }
 
     // All Items being sold
-    Items[] public allItems;
-
-    // Get A item from _game by _templateId
-    mapping(address => mapping(uint256 => Items)) public itemByGame;
-
-    //Get all templateIds by _game
-    mapping(address => uint256[]) public templateIdsByGame;
-
-    //Get games by templateID
-    mapping(uint256 => address[]) public gamesByTemplateID;
+    Item[] public allItems;
 
     // All Fees collected
     uint256 public collectedFees;
@@ -56,22 +50,31 @@ contract Merchant is Ownable, ReentrancyGuard {
     // All buyBackPrice(s) ensures proper spending
     uint256 public buyBackPrices;
 
-    // Games that are allowed to use merchant
-    mapping(address => uint256) public whitelist;
+    // Get A item from _game by _templateId
+    mapping(address => mapping(uint256 => Item)) public itemByGame;
 
-    //TemplatedID count per game. Needed by templateIdsByGame()
+    // Get all templateIds by _game
+    mapping(address => uint256[]) public templateIdsByGame;
+
+    // Get games by templateID
+    mapping(uint256 => address[]) public gamesByTemplateId;
+
+    // Games that are allowed to use merchant
+    mapping(address => bool) public whitelist;
+
+    // TemplatedId count per game. Needed by templateIdsByGame()
     mapping(address => uint256) public totalItemsForSaleByGame;
 
     modifier isDevOf(address _game) {
         require(
             msg.sender == devOf(_game),
-            "Merchant: Caller is not the Game developer."
+            "Merchant: Caller is not the Game developer"
         );
         _;
     }
 
     modifier inStock(address _game, uint256 _templateId) {
-        Items memory item = itemByGame[_game][_templateId];
+        Item memory item = itemByGame[_game][_templateId];
         require(
             item.stock > 0 || item.priceSystem == 2,
             "Merchant: Item requested is out of stock"
@@ -79,56 +82,77 @@ contract Merchant is Ownable, ReentrancyGuard {
         _;
     }
 
+    /**
+     * @dev Constructor function
+     * @param _inventoryFee Inventory Fee
+     * @param _Inventory Interface of Inventory
+     * @param _Vidya Interface of Vidya
+     * @param _vaultAddr Address of Vault
+     */
     constructor(
         uint256 _inventoryFee,
         IInventory _Inventory,
         IERC20 _Vidya,
-        address _vault
+        address _vaultAddr
     ) {
         inventoryFee = _inventoryFee;
         Inventory = _Inventory;
         Vidya = _Vidya;
-        vault = _vault;
+        vaultAddr = _vaultAddr;
+
+        emit MerchantDeployed();
     }
 
-    // Function to return the Merchant's profit
+    /**
+     * @dev Public function to get the profits.
+     */
     function profits() public view returns (uint256) {
         return Vidya.balanceOf(address(this)) - buyBackPrices;
     }
 
-    // Function to return the dev of _game
+    /**
+     * @dev Public function to get the game developer address.
+     * @param _game Address of Game
+     */
     function devOf(address _game) public view returns (address) {
-        iGame game = iGame(_game);
+        IGame game = IGame(_game);
         return game.developer();
     }
 
-    // Function to return the devFee of _game
+    /**
+     * @dev Public function to get the game developer fee.
+     * @param _game Address of Game
+     */
     function devFee(address _game) public view returns (uint256) {
-        iGame game = iGame(_game);
+        IGame game = IGame(_game);
         return game.devFee();
     }
 
-    // Function to return the total price of _templateId from _game a player is expected to pay
+    /**
+     * @dev Public function to return the total price of _templateId from _game a player is expected to pay.
+     * @param _templateId Template Id
+     * @param _game Address of Game
+     */
     function sellPrice(uint256 _templateId, address _game)
         public
         view
         returns (uint256)
     {
-        Items memory item = itemByGame[_game][_templateId];
-
-        // item price + devfee
-        // does not include inventory fee because this is for the dev to pay upon listing new items
+        Item memory item = itemByGame[_game][_templateId];
         return item.price + devFee(_game);
     }
 
-    // Get features and equipmentPosition of item by game
-    // Helps prevent stack too deep error in sellTemplateId() function
+    /**
+     * @dev Public function to get features and equipmentPosition of item by game. Help to prevent stack too deep error in sellTemplateId() function.
+     * @param _game Address of Game
+     * @param _templateId Template Id
+     */
     function detailsOfItemByGame(address _game, uint256 _templateId)
         public
         view
         returns (uint8[] memory)
     {
-        Items memory item = itemByGame[_game][_templateId];
+        Item memory item = itemByGame[_game][_templateId];
         uint8[] memory details = new uint8[](5);
         details[0] = item.feature1;
         details[1] = item.feature2;
@@ -142,10 +166,11 @@ contract Merchant is Ownable, ReentrancyGuard {
     function sellItem(
         uint256 _templateId,
         address _game,
-        address _receiver
+        address _receiver,
+        uint256 _amount
     ) public returns (uint256, bool) {
         restock(_game, _templateId);
-        return sellTemplateId(_templateId, _game);
+        return sellTemplateId(_templateId, _game, _receiver, _amount);
     }
 
     // Sells a _templateId from _game (player is buying)
@@ -155,7 +180,7 @@ contract Merchant is Ownable, ReentrancyGuard {
         address _receiver,
         uint256 _amount
     ) internal inStock(_game, _templateId) returns (uint256, bool) {
-        Items storage item = itemByGame[_game][_templateId];
+        Item storage item = itemByGame[_game][_templateId];
 
         // Transfer buyBackPrice to Merchant contract
         if (item.buyBackPrice > 0) {
@@ -170,11 +195,11 @@ contract Merchant is Ownable, ReentrancyGuard {
             Vidya.safeTransferFrom(msg.sender, devOf(_game), devFee(_game));
         }
         //Sends Profits to Vault
-        uint256 _VP = item.price - item.buyBackPrice;
-        Vidya.safeTransferFrom(msg.sender, vault, _VP);
+        uint256 vaultProfit = item.price - item.buyBackPrice;
+        Vidya.safeTransferFrom(msg.sender, vaultAddr, vaultProfit);
 
         // Track the buyBackPrices
-        buyBackPrices = buyBackPrice + buyBackPrices;
+        buyBackPrices += item.buyBackPrice;
 
         if (item.priceSystem == 2) {
             uint256 increase = (item.price * item.rate) / 100;
@@ -196,7 +221,7 @@ contract Merchant is Ownable, ReentrancyGuard {
             _receiver
         );
 
-        templateIDByTokenID[tokenID] = _templateId;
+        //    templateIdByTokenId[tokenId] = _templateId;
 
         // tokenId of the item sold to player
         return (tokenId, true);
@@ -209,9 +234,11 @@ contract Merchant is Ownable, ReentrancyGuard {
         address _holder,
         uint256 _amount
     ) external returns (uint256) {
-        uint256 templateIds = inventory.allItems(_tokenID)._templateId;
+        IInventory.Item memory inventoryItem = Inventory.allItems(_tokenId);
 
-        Items storage item = itemByGame[_game][templateID];
+        uint256 templateId = inventoryItem.templateId;
+
+        Item storage item = itemByGame[_game][templateId];
 
         Inventory.burn(_holder, _tokenId, _amount);
         item.stock += _amount;
@@ -226,12 +253,12 @@ contract Merchant is Ownable, ReentrancyGuard {
 
     // Restocks an item
     function restock(address _game, uint256 _templateId) internal {
-        Items storage item = itemByGame[_game][_templateId];
+        Item storage item = itemByGame[_game][_templateId];
         if (item.priceSystem == 1) {
             if (block.timestamp - item.restockTime >= item.cooldownTime) {
                 // Restock the item
                 item.stock = item.stockCap;
-                item.restockTime = uint32(now);
+                item.restockTime = block.timestamp;
             }
         }
     }
@@ -249,7 +276,7 @@ contract Merchant is Ownable, ReentrancyGuard {
     function withdrawProfit() external onlyOwner {
         uint256 profit = profits();
         // Send the tokens
-        token.transfer(owner, profit);
+        Vidya.transfer(msg.sender, profit);
     }
 
     // Game developer can list new items on merchant
@@ -263,7 +290,7 @@ contract Merchant is Ownable, ReentrancyGuard {
         uint32 _cooldownTime,
         uint8[] calldata _details,
         uint8 _priceSystem,
-        uint256 rate
+        uint256 _rate
     ) external isDevOf(_game) {
         require(
             _buyBackPrice < _price,
@@ -277,15 +304,15 @@ contract Merchant is Ownable, ReentrancyGuard {
             "Merchant: Trying to add item that does not exist yet"
         );
         require(
-            Inventory.GameApproved(_templateId, _game),
+            Inventory.templateApprovedGames(_templateId, _game),
             "Merchant: Game is not approved"
         );
-        Items memory item;
+        Item memory item;
 
-        if (gamesByTemplate[_templateId].lentgh > 0) {
-            item = itemByGame[gamesByTemplate[_templateId][0]];
+        if (gamesByTemplateId[_templateId].length > 0) {
+            item = itemByGame[gamesByTemplateId[_templateId][0]][_templateId];
         } else {
-            item = Items(
+            item = Item(
                 _game,
                 _templateId,
                 0,
@@ -293,7 +320,7 @@ contract Merchant is Ownable, ReentrancyGuard {
                 _buyBackPrice,
                 _stock,
                 _stockCap,
-                uint32(now),
+                block.timestamp,
                 _cooldownTime,
                 _details[0], // feature1
                 _details[1], // feature2
@@ -305,14 +332,14 @@ contract Merchant is Ownable, ReentrancyGuard {
             );
         }
         // Transfer the listing fee to owner
-        Vidya.safeTransferFrom(msg.sender, owner, inventoryFee);
+        Vidya.safeTransferFrom(msg.sender, owner(), inventoryFee);
 
         // Update fees-to-inventory tracker
         collectedFees += inventoryFee;
 
         totalItemsForSaleByGame[_game]++;
         uint256 index = allItems.length;
-        itemByGame[_game][_templateId] = Items(
+        itemByGame[_game][_templateId] = Item(
             _game,
             _templateId,
             index,
@@ -320,7 +347,7 @@ contract Merchant is Ownable, ReentrancyGuard {
             item.buyBackPrice,
             _stock,
             _stockCap,
-            uint32(now),
+            block.timestamp,
             _cooldownTime,
             _details[0], // feature1
             _details[1], // feature2
@@ -332,7 +359,7 @@ contract Merchant is Ownable, ReentrancyGuard {
         );
 
         allItems.push(
-            Items(
+            Item(
                 _game,
                 _templateId,
                 index,
@@ -340,7 +367,7 @@ contract Merchant is Ownable, ReentrancyGuard {
                 item.buyBackPrice,
                 _stock,
                 _stockCap,
-                uint32(now),
+                block.timestamp,
                 _cooldownTime,
                 _details[0], // feature1
                 _details[1], // feature2
@@ -351,7 +378,7 @@ contract Merchant is Ownable, ReentrancyGuard {
                 item.rate
             )
         );
-        gamesByTemplate[_templateId].push(_game);
+        gamesByTemplateId[_templateId].push(_game);
         templateIdsByGame[_game].push(_templateId);
     }
 }

@@ -5,6 +5,16 @@ pragma solidity ^0.8.6;
  * @title Inventory Interface
  */
 interface IInventory {
+    struct Item {
+        uint256 templateId; // id of Template in the itemTemplates array
+        uint8 feature1;
+        uint8 feature2;
+        uint8 feature3;
+        uint8 feature4;
+        uint8 equipmentPosition;
+        bool burned;
+    }
+
     /**
      * @dev External function to create item from templates. This function can be called by approved games only.
      * @param _templateId Id of template
@@ -39,4 +49,23 @@ interface IInventory {
         uint256 _tokenId,
         uint256 _amount
     ) external;
+
+    /**
+     * @dev External function to get the Item of Inventory.
+     * @param _tokenId Token id
+     */
+    function allItems(uint256 _tokenId) external view returns (Item memory);
+
+    /**
+     * @dev External function to check if template id does exist or not.
+     * @param _templateId Template id
+     */
+    function templateExists(uint256 _templateId) external view returns (bool);
+
+    /**
+     * @dev External function to check if current game for template id is approved.
+     * @param _templateId Template id
+     * @param _gameAddr Game Address
+     */
+    function templateApprovedGames(uint256 _templateId, address _gameAddr) external view returns(bool);
 }
