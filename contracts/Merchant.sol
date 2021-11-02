@@ -14,6 +14,15 @@ contract Merchant is Ownable, ReentrancyGuard {
     /// @notice Event emitted only on construction.
     event MerchantDeployed();
 
+    /// @notice Event emitted when inventory fee has updated.
+    event InventoryFeeUpdated(uint256 newInventoryFee);
+
+    /// @notice Event emitted when whitelist of game has updated.
+    event WhitelistUpdated(address gameAddr, bool status);
+
+    /// @notice Event emitted when profit has withdrawn.
+    event ProfitWithdrew(uint256 profit);
+
     //System information
     IInventory public Inventory;
     IERC20 public Vidya;
@@ -22,6 +31,13 @@ contract Merchant is Ownable, ReentrancyGuard {
     //Listing Fee for devs
     uint256 public inventoryFee;
 
+    struct ItemFeatures {
+        uint8 feature1;
+        uint8 feature2;
+        uint8 feature3;
+        uint8 feature4;
+    }
+    
     struct Item {
         address game; // which game is selling this
         uint256 templateId; // which item is this
@@ -32,10 +48,7 @@ contract Merchant is Ownable, ReentrancyGuard {
         uint256 stockCap; // the stock cap that restock fills up to
         uint256 restockTime; // time of last restock
         uint256 cooldownTime; // time left until next restock is possible (ie. an item has 1 day cooldownTime between restocks)
-        uint8 feature1;
-        uint8 feature2;
-        uint8 feature3;
-        uint8 feature4;
+        ItemFeatures features;
         uint8 equipmentPosition;
         uint8 priceSystem;
         uint256 rate;
@@ -154,15 +167,21 @@ contract Merchant is Ownable, ReentrancyGuard {
     {
         Item memory item = itemByGame[_game][_templateId];
         uint8[] memory details = new uint8[](5);
-        details[0] = item.feature1;
-        details[1] = item.feature2;
-        details[2] = item.feature3;
-        details[3] = item.feature4;
+        details[0] = item.features.feature1;
+        details[1] = item.features.feature2;
+        details[2] = item.features.feature3;
+        details[3] = item.features.feature4;
         details[4] = item.equipmentPosition;
         return details;
     }
 
-    // Public function to sell item to player (player is buying)
+    /**
+     * @dev Public function to sell item to player. (player is buying)
+     * @param _templateId Template Id
+     * @param _game Address of Game
+     * @param _receiver Receiver address
+     * @param _amount Item amount
+     */
     function sellItem(
         uint256 _templateId,
         address _game,
@@ -173,7 +192,13 @@ contract Merchant is Ownable, ReentrancyGuard {
         return sellTemplateId(_templateId, _game, _receiver, _amount);
     }
 
-    // Sells a _templateId from _game (player is buying)
+    /**
+     * @dev Internal function to sell items by template id from game. (player is buying)
+     * @param _templateId Template Id
+     * @param _game Address of Game
+     * @param _receiver Receiver address
+     * @param _amount Item amount
+     */
     function sellTemplateId(
         uint256 _templateId,
         address _game,
@@ -212,22 +237,25 @@ contract Merchant is Ownable, ReentrancyGuard {
         // Materialize
         uint256 tokenId = Inventory.createItemFromTemplate(
             _templateId,
-            item.feature1,
-            item.feature2,
-            item.feature3,
-            item.feature4,
+            item.features.feature1,
+            item.features.feature2,
+            item.features.feature3,
+            item.features.feature4,
             item.equipmentPosition,
             _amount,
             _receiver
         );
 
-        //    templateIdByTokenId[tokenId] = _templateId;
-
-        // tokenId of the item sold to player
         return (tokenId, true);
     }
 
-    // "buys" a token back from the player (burns the token and sends buyBackPrice to player)
+    /**
+     * @dev External function to buy a token back from the player (burns the token and sends buyBackPrice to player)
+     * @param _tokenId Token Id
+     * @param _game Address of Game
+     * @param _holder Token holder address
+     * @param _amount Item amount
+     */
     function buyTokenId(
         uint256 _tokenId,
         address _game,
@@ -251,35 +279,65 @@ contract Merchant is Ownable, ReentrancyGuard {
         return templateId;
     }
 
-    // Restocks an item
+    /**
+     * @dev Internal function to restock item.
+     * @param _game Address of Game
+     * @param _templateId Template Id
+     */
     function restock(address _game, uint256 _templateId) internal {
         Item storage item = itemByGame[_game][_templateId];
         if (item.priceSystem == 1) {
             if (block.timestamp - item.restockTime >= item.cooldownTime) {
-                // Restock the item
                 item.stock = item.stockCap;
                 item.restockTime = block.timestamp;
             }
         }
     }
 
-    /* Admin Functions */
-
+    /**
+     * @dev External function to update invetory fee. This function can be called only by owner.
+     * @param _fee New inventory fee
+     */
     function updateInventoryFee(uint256 _fee) external onlyOwner {
         inventoryFee = _fee;
+
+        emit InventoryFeeUpdated(inventoryFee);
     }
 
+    /**
+     * @dev External function to update whitelist. This function can be called only by owner.
+     * @param _game Address of game to approve
+     * @param _status Game approval
+     */
     function updateWhitelist(address _game, bool _status) external onlyOwner {
         whitelist[_game] = _status;
+
+        emit WhitelistUpdated(_game, _status);
     }
 
+    /**
+     * @dev External function to withdraw the profit. This function can be called only by owner.
+     */
     function withdrawProfit() external onlyOwner {
         uint256 profit = profits();
-        // Send the tokens
         Vidya.transfer(msg.sender, profit);
+
+        emit ProfitWithdrew(profit);
     }
 
-    // Game developer can list new items on merchant
+    /**
+     * @dev External function to allow game developer can list new items on merchant. This function can be called only by game developer.
+     * @param _game Address of game
+     * @param _templateId Template id
+     * @param _price Token price
+     * @param _buyBackPrice Price that merchant is willing to pay for item
+     * @param _stock How many merchant has in stock right now
+     * @param _stockCap Stock cap that restock fills up to
+     * @param _cooldownTime Time left until next restock is possible
+     * @param _details Item features
+     * @param _priceSystem Price system
+     * @param _rate Token rate
+     */
     function listNewItem(
         address _game,
         uint256 _templateId,
@@ -296,6 +354,7 @@ contract Merchant is Ownable, ReentrancyGuard {
             _buyBackPrice < _price,
             "Merchant: Buyback price cannot be bigger than item price"
         ); // this would be very bad if allowed!
+
         require(whitelist[_game], "Merchant: Game is not whitelisted");
 
         // Fails when totalSupply of template is 0. Not added by admin to inventory contract
@@ -303,14 +362,22 @@ contract Merchant is Ownable, ReentrancyGuard {
             Inventory.templateExists(_templateId),
             "Merchant: Trying to add item that does not exist yet"
         );
+
         require(
             Inventory.templateApprovedGames(_templateId, _game),
             "Merchant: Game is not approved"
         );
+
         Item memory item;
+        ItemFeatures memory features;
+        features.feature1 = _details[0];
+        features.feature2 = _details[1];
+        features.feature3 = _details[2];
+        features.feature4 = _details[3];
 
         if (gamesByTemplateId[_templateId].length > 0) {
-            item = itemByGame[gamesByTemplateId[_templateId][0]][_templateId];
+            address game = gamesByTemplateId[_templateId][0];
+            item = itemByGame[game][_templateId];
         } else {
             item = Item(
                 _game,
@@ -322,10 +389,7 @@ contract Merchant is Ownable, ReentrancyGuard {
                 _stockCap,
                 block.timestamp,
                 _cooldownTime,
-                _details[0], // feature1
-                _details[1], // feature2
-                _details[2], // feature3
-                _details[3], // feature4
+                features,
                 _details[4], // equipmentPosition
                 _priceSystem,
                 _rate
@@ -349,10 +413,7 @@ contract Merchant is Ownable, ReentrancyGuard {
             _stockCap,
             block.timestamp,
             _cooldownTime,
-            _details[0], // feature1
-            _details[1], // feature2
-            _details[2], // feature3
-            _details[3], // feature4
+            features,
             _details[4], // equipmentPosition
             item.priceSystem,
             item.rate
@@ -369,10 +430,7 @@ contract Merchant is Ownable, ReentrancyGuard {
                 _stockCap,
                 block.timestamp,
                 _cooldownTime,
-                _details[0], // feature1
-                _details[1], // feature2
-                _details[2], // feature3
-                _details[3], // feature4
+                features,
                 _details[4], // equipmentPosition
                 item.priceSystem,
                 item.rate
