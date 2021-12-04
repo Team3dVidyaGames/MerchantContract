@@ -208,9 +208,11 @@ contract Merchant is Ownable, ReentrancyGuard {
         address _game,
         address _receiver,
         uint256 _amount
-    ) internal inStock(_game, _templateId) returns (uint256, bool) {
+    ) internal returns (uint256, bool) {
         Item storage item = itemByGame[_game][_templateId];
-
+        require(item.wareHouse.stock >= _amount,
+            "Merchant: Item requested is out of stock"
+        );
         // Transfer buyBackPrice to Merchant contract
         Vidya.safeTransferFrom(msg.sender,address(this),item.buyBackPrice);
         // Transfer dev fee to game developer
