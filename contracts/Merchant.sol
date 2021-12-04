@@ -363,7 +363,7 @@ contract Merchant is Ownable, ReentrancyGuard {
 
         if (gamesByTemplateId[_templateId].length > 0) {
             address game = gamesByTemplateId[_templateId][0];
-            item = detailsOfItemByGame(game, _templateId);
+            item = itemByGame[game][ _templateId];
         } else {
             item = Item(
                 _game,
