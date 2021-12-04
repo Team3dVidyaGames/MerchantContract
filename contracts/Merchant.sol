@@ -54,7 +54,7 @@ contract Merchant is Ownable, ReentrancyGuard {
         uint256 buyBackPrice; // what the merchant is willing to pay for this item
         Supplies wareHouse;
         ItemFeatures features;
-        uint256 _priceImpact
+        uint256 _priceImpact;
 
     }
 
