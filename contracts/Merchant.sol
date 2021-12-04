@@ -8,6 +8,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./interfaces/IInventory.sol";
 import "./interfaces/IGame.sol";
 
+
 contract Merchant is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -54,7 +55,7 @@ contract Merchant is Ownable, ReentrancyGuard {
         uint256 buyBackPrice; // what the merchant is willing to pay for this item
         Supplies wareHouse;
         ItemFeatures features;
-        uint256 _priceImpact;
+        uint256 priceImpact;
 
     }
 
@@ -93,7 +94,7 @@ contract Merchant is Ownable, ReentrancyGuard {
     modifier inStock(address _game, uint256 _templateId) {
         Item memory item = itemByGame[_game][_templateId];
         require(
-            item.wareHous.stock > 0,
+            item.wareHouse.stock > 0,
             "Merchant: Item requested is out of stock"
         );
         _;
@@ -167,10 +168,15 @@ contract Merchant is Ownable, ReentrancyGuard {
     function detailsOfItemByGame(address _game, uint256 _templateId)
         public
         view
-        returns (uint8[] memory)
+        returns (uint8[5] memory features)
     {
         Item memory item = itemByGame[_game][_templateId];
-        return item.features;
+        features[0] = item.features.feature1;
+        features[1] = item.features.feature2;
+        features[2] = item.features.feature3;
+        features[3] = item.features.feature4;
+        features[4] = item.features.equipmentPosition;
+        return features;
     }
 
     /**
@@ -206,27 +212,16 @@ contract Merchant is Ownable, ReentrancyGuard {
         Item storage item = itemByGame[_game][_templateId];
 
         // Transfer buyBackPrice to Merchant contract
-        if (item.buyBackPrice > 0) {
-            Vidya.safeTransferFrom(
-                msg.sender,
-                address(this),
-                item.buyBackPrice
-            );
-        }
+        Vidya.safeTransferFrom(msg.sender,address(this),item.buyBackPrice);
         // Transfer dev fee to game developer
-        if (devFee(_game) > 0) {
-            Vidya.safeTransferFrom(msg.sender, devOf(_game), devFee(_game));
-        }
+        Vidya.safeTransferFrom(msg.sender, devOf(_game), devFee(_game));
         //Sends Profits to Vault
-        uint256 vaultProfit = item.price - item.buyBackPrice;
-        Vidya.safeTransferFrom(msg.sender, vaultAddr, vaultProfit);
+        Vidya.safeTransferFrom(msg.sender, vaultAddr, item.price - item.buyBackPrice);
 
         // Track the buyBackPrices
         buyBackPrices += item.buyBackPrice;
 
-
-        uint256 increase = (item.price * item.priceImpact) / 10000;
-        item.price += increase;
+        item.price +=  (item.price * item.priceImpact * _amount) / 10000;
         item.wareHouse.stock -= _amount;
 
         // Materialize
@@ -264,7 +259,7 @@ contract Merchant is Ownable, ReentrancyGuard {
         Item storage item = itemByGame[_game][templateId];
 
         Inventory.burn(_holder, _tokenId, _amount);
-        item.stock += _amount;
+        item.wareHouse.stock += _amount;
 
         Vidya.safeTransfer(msg.sender, item.buyBackPrice);
 
@@ -372,7 +367,7 @@ contract Merchant is Ownable, ReentrancyGuard {
                 _price,
                 _buyBackPrice,
                 stock,
-                features,
+                _details,
                 _priceImpact
             );
         }
@@ -391,8 +386,8 @@ contract Merchant is Ownable, ReentrancyGuard {
             item.price,
             item.buyBackPrice,
             stock,
-            details,
-            item._priceImpact
+            _details,
+            item.priceImpact
         );
 
         allItems.push(
@@ -403,8 +398,8 @@ contract Merchant is Ownable, ReentrancyGuard {
                 item.price,
                 item.buyBackPrice,
                 stock,
-                details,
-                item._priceImpact
+                _details,
+                item.priceImpact
             )
         );
         gamesByTemplateId[_templateId].push(_game);
