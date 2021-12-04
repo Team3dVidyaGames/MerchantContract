@@ -326,9 +326,7 @@ contract Merchant is Ownable, ReentrancyGuard {
      * @param _templateId Template id
      * @param _price Token price
      * @param _buyBackPrice Price that merchant is willing to pay for item
-     * @param _stock How many merchant has in stock right now
-     * @param _stockCap Stock cap that restock fills up to
-     * @param _cooldownTime Time left until next restock is possible
+     * @param stock Supplies Information
      * @param _details Item features
      * @param _priceImpact Price impact adjust the price every buy. For no impact enter 0.
      */
