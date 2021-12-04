@@ -182,7 +182,7 @@ contract Merchant is Ownable, ReentrancyGuard {
         address _game,
         address _receiver,
         uint256 _amount
-    ) public returns (uint256, bool) {
+    ) public nonReentrant returns (uint256, bool) {
         restock(_game, _templateId);
         return sellTemplateId(_templateId, _game, _receiver, _amount);
     }
