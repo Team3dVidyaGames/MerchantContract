@@ -91,15 +91,6 @@ contract Merchant is Ownable, ReentrancyGuard {
         _;
     }
 
-    modifier inStock(address _game, uint256 _templateId) {
-        Item memory item = itemByGame[_game][_templateId];
-        require(
-            item.wareHouse.stock > 0,
-            "Merchant: Item requested is out of stock"
-        );
-        _;
-    }
-
     /**
      * @dev Constructor function
      * @param _inventoryFee Inventory Fee
