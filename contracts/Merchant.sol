@@ -36,6 +36,14 @@ contract Merchant is Ownable, ReentrancyGuard {
         uint8 feature2;
         uint8 feature3;
         uint8 feature4;
+        uint8 equipmentPosition; 
+    }
+
+    struct Supplies{
+        uint256 stock; // how many merchant has in stock right now
+        uint256 stockCap; // the stock cap that restock fills up to
+        uint256 restockTime; // time of last restock
+        uint256 cooldownTime; // time left until next restock is possible (ie. an item has 1 day cooldownTime between restocks)
     }
     
     struct Item {
@@ -44,14 +52,10 @@ contract Merchant is Ownable, ReentrancyGuard {
         uint256 index;
         uint256 price; // the price of this item
         uint256 buyBackPrice; // what the merchant is willing to pay for this item
-        uint256 stock; // how many merchant has in stock right now
-        uint256 stockCap; // the stock cap that restock fills up to
-        uint256 restockTime; // time of last restock
-        uint256 cooldownTime; // time left until next restock is possible (ie. an item has 1 day cooldownTime between restocks)
+        Supplies wareHouse;
         ItemFeatures features;
-        uint8 equipmentPosition;
-        uint8 priceSystem;
-        uint256 rate;
+        uint256 _priceImpact
+
     }
 
     // All Items being sold
@@ -166,13 +170,7 @@ contract Merchant is Ownable, ReentrancyGuard {
         returns (uint8[] memory)
     {
         Item memory item = itemByGame[_game][_templateId];
-        uint8[] memory details = new uint8[](5);
-        details[0] = item.features.feature1;
-        details[1] = item.features.feature2;
-        details[2] = item.features.feature3;
-        details[3] = item.features.feature4;
-        details[4] = item.equipmentPosition;
-        return details;
+        return item.features;
     }
 
     /**
@@ -226,13 +224,10 @@ contract Merchant is Ownable, ReentrancyGuard {
         // Track the buyBackPrices
         buyBackPrices += item.buyBackPrice;
 
-        if (item.priceSystem == 2) {
-            uint256 increase = (item.price * item.rate) / 100;
-            item.price += increase;
-        } else {
-            //Remove Stock if in system 1
-            item.stock -= _amount;
-        }
+
+        uint256 increase = (item.price * item.priceImpact) / 10000;
+        item.price += increase;
+        item.wareHouse.stock -= _amount;
 
         // Materialize
         uint256 tokenId = Inventory.createItemFromTemplate(
@@ -241,7 +236,7 @@ contract Merchant is Ownable, ReentrancyGuard {
             item.features.feature2,
             item.features.feature3,
             item.features.feature4,
-            item.equipmentPosition,
+            item.features.equipmentPosition,
             _amount,
             _receiver
         );
@@ -286,12 +281,12 @@ contract Merchant is Ownable, ReentrancyGuard {
      */
     function restock(address _game, uint256 _templateId) internal {
         Item storage item = itemByGame[_game][_templateId];
-        if (item.priceSystem == 1) {
-            if (block.timestamp - item.restockTime >= item.cooldownTime) {
-                item.stock = item.stockCap;
-                item.restockTime = block.timestamp;
-            }
+        
+        if (block.timestamp - item.wareHouse.restockTime >= item.wareHouse.cooldownTime) {
+            item.wareHouse.stock = item.wareHouse.stockCap;
+            item.wareHouse.restockTime = block.timestamp;
         }
+
     }
 
     /**
@@ -335,20 +330,17 @@ contract Merchant is Ownable, ReentrancyGuard {
      * @param _stockCap Stock cap that restock fills up to
      * @param _cooldownTime Time left until next restock is possible
      * @param _details Item features
-     * @param _priceSystem Price system
-     * @param _rate Token rate
+     * @param _priceImpact Price impact adjust the price every buy. For no impact enter 0.
      */
     function listNewItem(
         address _game,
         uint256 _templateId,
         uint256 _price,
         uint256 _buyBackPrice,
-        uint256 _stock,
-        uint256 _stockCap,
-        uint32 _cooldownTime,
-        uint8[] calldata _details,
-        uint8 _priceSystem,
-        uint256 _rate
+        Supplies memory stock,
+        ItemFeatures memory _details,
+        uint256 _priceImpact
+
     ) external isDevOf(_game) {
         require(
             _buyBackPrice < _price,
@@ -369,15 +361,11 @@ contract Merchant is Ownable, ReentrancyGuard {
         );
 
         Item memory item;
-        ItemFeatures memory features;
-        features.feature1 = _details[0];
-        features.feature2 = _details[1];
-        features.feature3 = _details[2];
-        features.feature4 = _details[3];
+        stock.restockTime = block.timestamp;
 
         if (gamesByTemplateId[_templateId].length > 0) {
             address game = gamesByTemplateId[_templateId][0];
-            item = itemByGame[game][_templateId];
+            item = detailsOfItemByGame(game, _templateId);
         } else {
             item = Item(
                 _game,
@@ -385,14 +373,9 @@ contract Merchant is Ownable, ReentrancyGuard {
                 0,
                 _price,
                 _buyBackPrice,
-                _stock,
-                _stockCap,
-                block.timestamp,
-                _cooldownTime,
+                stock,
                 features,
-                _details[4], // equipmentPosition
-                _priceSystem,
-                _rate
+                _priceImpact
             );
         }
         // Transfer the listing fee to owner
@@ -409,14 +392,9 @@ contract Merchant is Ownable, ReentrancyGuard {
             index,
             item.price,
             item.buyBackPrice,
-            _stock,
-            _stockCap,
-            block.timestamp,
-            _cooldownTime,
-            features,
-            _details[4], // equipmentPosition
-            item.priceSystem,
-            item.rate
+            stock,
+            details,
+            item._priceImpact
         );
 
         allItems.push(
@@ -426,14 +404,9 @@ contract Merchant is Ownable, ReentrancyGuard {
                 index,
                 item.price,
                 item.buyBackPrice,
-                _stock,
-                _stockCap,
-                block.timestamp,
-                _cooldownTime,
-                features,
-                _details[4], // equipmentPosition
-                item.priceSystem,
-                item.rate
+                stock,
+                details,
+                item._priceImpact
             )
         );
         gamesByTemplateId[_templateId].push(_game);
